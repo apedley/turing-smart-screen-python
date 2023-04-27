@@ -95,6 +95,26 @@ def get_hw_and_update(hwtype: Hardware.HardwareType) -> Hardware.Hardware:
     return None
 
 
+def get_gpu_name() -> str:
+    # Determine which GPU to use, in case there are multiple : try to avoid using discrete GPU for stats
+    hw_gpus = []
+    for hardware in handle.Hardware:
+        if hardware.HardwareType == Hardware.HardwareType.GpuNvidia \
+                or hardware.HardwareType == Hardware.HardwareType.GpuAmd \
+                or hardware.HardwareType == Hardware.HardwareType.GpuIntel:
+            hw_gpus.append(hardware)
+
+    if len(hw_gpus) == 0:
+        # No supported GPU found on the system
+        return ""
+    elif len(hw_gpus) == 1:
+        # Found one supported GPU
+        return str(hw_gpus[0].Name)
+    else:
+        # Found multiple GPUs, try to determine which one to use
+        pass
+
+
 def get_net_interface_and_update(if_name: str) -> Hardware.Hardware:
     for hardware in handle.Hardware:
         if hardware.HardwareType == Hardware.HardwareType.Network and hardware.Name == if_name:
