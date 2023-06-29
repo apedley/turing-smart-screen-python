@@ -74,19 +74,27 @@ class LcdComm(ABC):
 
     def openSerial(self):
         if self.com_port == 'AUTO':
-            lcd_com_port = self.auto_detect_com_port()
-            if not lcd_com_port:
-                logger.error("Cannot find COM port automatically, please run Configuration again and select COM port manually")
+            self.com_port = self.auto_detect_com_port()
+            if not self.com_port:
+                logger.error(
+                    "Cannot find COM port automatically, please run Configuration again and select COM port manually")
                 try:
                     sys.exit(0)
                 except:
                     os._exit(0)
-            logger.debug(f"Auto detected COM port: {lcd_com_port}")
-            self.lcd_serial = serial.Serial(lcd_com_port, 115200, timeout=1, rtscts=1)
+            else:
+                logger.debug(f"Auto detected COM port: {self.com_port}")
         else:
-            lcd_com_port = self.com_port
-            logger.debug(f"Static COM port: {lcd_com_port}")
-            self.lcd_serial = serial.Serial(lcd_com_port, 115200, timeout=1, rtscts=1)
+            logger.debug(f"Static COM port: {self.com_port}")
+
+        try:
+            self.lcd_serial = serial.Serial(self.com_port, 115200, timeout=1, rtscts=1)
+        except Exception as e:
+            logger.error(f"Cannot open COM port {self.com_port}: {e}")
+            try:
+                sys.exit(0)
+            except:
+                os._exit(0)
 
     def closeSerial(self):
         try:
@@ -95,12 +103,7 @@ class LcdComm(ABC):
             pass
 
     def WriteData(self, byteBuffer: bytearray):
-        try:
-            self.lcd_serial.write(bytes(byteBuffer))
-        except serial.serialutil.SerialTimeoutException:
-            # We timed-out trying to write to our device, slow things down.
-            logger.warning("(Write data) Too fast! Slow down!")
-
+        self.WriteLine(bytes(byteBuffer))
 
     def SendLine(self, line: bytes):
         if self.update_queue:
@@ -116,14 +119,29 @@ class LcdComm(ABC):
         except serial.serialutil.SerialTimeoutException:
             # We timed-out trying to write to our device, slow things down.
             logger.warning("(Write line) Too fast! Slow down!")
+        except serial.serialutil.SerialException:
+            # Error writing data to device: close and reopen serial port, try to write again
+            logger.error(
+                "SerialException: Failed to send serial data to device. Closing and reopening COM port before retrying once.")
+            self.closeSerial()
+            self.openSerial()
+            self.lcd_serial.write(line)
 
     def ReadData(self, readSize: int):
         try:
             response = self.lcd_serial.read(readSize)
-            #logger.debug("Received: [{}]".format(str(response, 'utf-8')))
-        except serial.serialutil.SerialException:
-            # We timed-out trying to read to our device, slow things down.
+            # logger.debug("Received: [{}]".format(str(response, 'utf-8')))
+            return response
+        except serial.serialutil.SerialTimeoutException:
+            # We timed-out trying to read from our device, slow things down.
             logger.warning("(Read data) Too fast! Slow down!")
+        except serial.serialutil.SerialException:
+            # Error writing data to device: close and reopen serial port, try to read again
+            logger.error(
+                "SerialException: Failed to read serial data from device. Closing and reopening COM port before retrying once.")
+            self.closeSerial()
+            self.openSerial()
+            return self.lcd_serial.read(readSize)
 
     @staticmethod
     @abstractmethod
@@ -311,10 +329,16 @@ class LcdComm(ABC):
         if isinstance(font_color, str):
             font_color = tuple(map(int, font_color.split(', ')))
 
+        if angle_start % 361 == angle_end % 361:
+            if clockwise:
+                angle_start += 0.1
+            else:
+                angle_end += 0.1
+
         assert xc - radius >= 0 and xc + radius <= self.get_width(), 'Progress bar width exceeds display width'
         assert yc - radius >= 0 and yc + radius <= self.get_height(), 'Progress bar height exceeds display height'
-        assert 0 < bar_width <= radius, 'Progress bar linewidth must be > 0 and <= radius'
-        assert angle_end % 361 != angle_start % 361, 'Change your angles values'
+        assert 0 < bar_width <= radius, f'Progress bar linewidth is {bar_width}, must be > 0 and <= radius'
+        assert angle_end % 361 != angle_start % 361, f'Invalid angles values, start = {angle_start}, end = {angle_end}'
         assert isinstance(angle_steps, int), 'angle_steps value must be an integer'
         assert angle_sep >= 0, 'Provide an angle_sep value >= 0'
         assert angle_steps > 0, 'Provide an angle_step value > 0'
@@ -342,7 +366,7 @@ class LcdComm(ABC):
             bar_image = bar_image.crop(box=bbox)
 
         # Draw progress bar
-        pct = (value - min_value)/(max_value - min_value)
+        pct = (value - min_value) / (max_value - min_value)
         draw = ImageDraw.Draw(bar_image)
 
         # PIL arc method uses angles with
